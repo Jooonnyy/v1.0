@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>底盘编码器监视台 · 4 路编码器 / 麦轮调参</title>
+<style>
+  :root{
+    --bg:#12151c; --panel:#1b2029; --panel2:#232936; --line:#2e3644;
+    --fg:#e6ebf2; --dim:#8b97a8; --acc:#4ea1ff; --ok:#38d39f; --warn:#ffb020; --err:#ff5c5c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:13px/1.5 "Segoe UI",system-ui,"Microsoft YaHei",sans-serif}
+  header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+         padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line)}
+  h1{font-size:15px;margin:0 10px 0 0;font-weight:600;white-space:nowrap}
+  button{background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+         border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px}
+  button:hover:not(:disabled){border-color:var(--acc)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--acc);border-color:var(--acc);color:#08111d;font-weight:600}
+  button.danger{border-color:#6b2b2b}
+  select,input[type=text]{background:var(--panel2);color:var(--fg);
+         border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:13px}
+  input[type=text]{min-width:220px}
+  .status{margin-left:auto;display:flex;gap:14px;align-items:center;font-size:12px;color:var(--dim)}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--dim);margin-right:5px}
+  .dot.on{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+  .dot.err{background:var(--err)}
+  main{padding:14px;display:grid;gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .card h2{margin:0 0 8px;font-size:13px;font-weight:600;color:var(--dim);
+           text-transform:uppercase;letter-spacing:.06em}
+  canvas{width:100%;height:190px;display:block;background:#0e1117;border-radius:6px}
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .tile{background:var(--panel2);border-radius:8px;padding:8px 10px}
+  .tile .nm{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px}
+  .sw{width:9px;height:9px;border-radius:2px;display:inline-block}
+  .tile .v{font:600 20px/1.25 ui-monospace,Consolas,monospace}
+  .tile .sub{font-size:11px;color:var(--dim);font-family:ui-monospace,Consolas,monospace}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .log{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--dim);
+       background:#0e1117;border-radius:6px;padding:8px;height:88px;overflow:auto;white-space:pre-wrap}
+  .hint{font-size:12px;color:var(--dim);margin-top:6px}
+  .err{color:var(--err)}
+  .warn{color:var(--warn)}
+  @media(max-width:760px){.tiles{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>底盘编码器监视台</h1>
+  <select id="baud">
+    <option>115200</option><option>230400</option><option>460800</option><option>921600</option>
+  </select>
+  <button id="btnConnect" class="primary">连接串口</button>
+  <button id="btnDisconnect" disabled>断开</button>
+  <button id="btnClear">清空</button>
+  <div class="status">
+    <span><span id="dot" class="dot"></span><span id="connText">未连接</span></span>
+    <span id="rateText">— 样本/秒</span>
+    <span id="cntText">0 帧</span>
+  </div>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2>累计计数 cA cB cC cD（counts）</h2>
+    <canvas id="cvCounts"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>转速 sA sB sC sD（counts/s）</h2>
+    <canvas id="cvSpeeds"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>当前值</h2>
+    <div class="tiles" id="tiles"></div>
+    <div class="hint">
+      换算：<b>1 count = 0.1785 mm</b>（1320 counts/轮转，轮径 75 mm）。
+      转速 × 0.1785 = mm/s；转速 ÷ 1320 × 60 = 轮子 RPM。
+      手转整 10 圈，对应通道的计数增量应约为 <b>13200</b>。<br>
+      ⚠ 这两条命中的是固件里的 <code>WHEEL_COUNTS_PER_REV</code> / <code>WHEEL_DIAMETER_MM</code>。
+      改了固件就必须同步改本文件 <b>166~168 行</b>的常数和上面这段说明，否则 mm / RPM 全是错的
+      （减速比 1:30 目前还没实测确认，改之前先验 10 圈 = 13200）。
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>诊断</h2>
+    <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
+      <div class="tile">
+        <div class="nm">tick 计数 t</div>
+        <div class="v" id="tickVal">—</div>
+        <div class="sub" id="tickRate">必须持续增长</div>
+      </div>
+      <div class="tile">
+        <div class="nm">tick 频率</div>
+        <div class="v" id="tickHz">—</div>
+        <div class="sub">应为 100 Hz</div>
+      </div>
+      <div class="tile">
+        <div class="nm">遥测帧率</div>
+        <div class="v" id="frameHz">—</div>
+        <div class="sub">应为 50 Hz</div>
+      </div>
+    </div>
+    <div class="hint">
+      <b>t 不动</b> → TIM7 中断没进来（固件问题）。<br>
+      <b>t 在涨但某路计数不动</b> → 那一路编码器没供电 / 没接好（最常见：编码器 VCC 与 GND 没接）。<br>
+      <b>计数在 0 附近小幅抖动（±几个到几十）</b> → 引脚浮空在拾噪，说明 MCU 侧通路是好的，只差真实信号。
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>发送命令</h2>
+    <div class="row">
+      <input type="text" id="cmd" placeholder="例如：M a 200   （回车发送）">
+      <button data-cmd="?">?</button>
+      <button data-cmd="Z">Z</button>
+      <button data-cmd="STOP" class="danger">STOP</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button data-cmd="M a 0">M a 0</button>
+      <button data-cmd="M a 150">M a 150</button>
+      <button data-cmd="M a 300">M a 300</button>
+      <button data-cmd="M b 300">M b 300</button>
+      <button data-cmd="M c 300">M c 300</button>
+      <button data-cmd="M d 300">M d 300</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button data-cmd="S">S（读状态）</button>
+      <button data-cmd="T 0">T 0（停遥测）</button>
+      <button data-cmd="T 1">T 1（开遥测）</button>
+    </div>
+    <div class="hint">
+      命令从 VOFA+ 或串口助手发都可以，但<b>一个 COM 口只能被一个程序占用</b> —— 用这个页面时请关掉其它串口工具。
+      轮子先架空，占空比从小到大试，随时点 STOP。<br>
+      <b>S</b> 的回显不是数据行，会打到下面"串口原始输出 / 非数据行"里，不会污染波形；
+      <b>T 0</b> / <b>T 1</b> 停 / 开 50 Hz 遥测流（想把日志看干净时先 T 0）。
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>数据记录（CSV）</h2>
+    <div class="row">
+      <button id="btnRec">开始记录</button>
+      <button id="btnSave" disabled>下载 CSV</button>
+      <span id="recText" class="hint" style="margin:0">未记录</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>串口原始输出 / 非数据行</h2>
+    <div class="log" id="log"></div>
+    <div class="hint">最后一行数据：<span id="lastLine" style="font-family:ui-monospace,Consolas,monospace">—</span></div>
+  </div>
+
+</main>
+
+<script>
+"use strict";
+
+/* ---------- 与本工程固件对应的通道定义 ---------- */
+const CH = 9;
+const NAMES  = ['cA','cB','cC','cD','sA','sB','sC','sD','t'];
+const COUNTS = [0,1,2,3];
+const SPEEDS = [4,5,6,7];
+const TICK   = 8;
+const COLORS = ['#ff6b6b','#4ecdc4','#ffd93d','#a29bfe'];
+const MAXPTS = 4000;              // 每通道保留的样本数
+/* 机械参数：和 BSP/Inc/board_encoder.h 保持一致 */
+const COUNTS_PER_REV = 1320;
+const CIRC_MM        = Math.PI * 75;
+const MM_PER_COUNT   = CIRC_MM / COUNTS_PER_REV;   // ≈0.1785 mm
+
+/* ---------- 状态 ---------- */
+let port = null, reader = null, keepReading = false;
+let series = NAMES.map(() => []);        // 每通道的样本数组
+let totalFrames = 0;
+let recOn = false, recRows = [];
+let rateWindow = [];                     // 最近 1 秒的帧时间戳
+let lastTick = null, lastTickTime = null, tickHz = null;
+
+/* ---------- DOM ---------- */
+const $ = id => document.getElementById(id);
+const dot = $('dot'), connText = $('connText'), logEl = $('log');
+
+function setConn(state, text){
+  dot.className = 'dot' + (state === 'on' ? ' on' : state === 'err' ? ' err' : '');
+  connText.textContent = text;
+}
+function logLine(text, cls){
+  const time = new Date().toLocaleTimeString('zh-CN', {hour12:false});
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.textContent = `[${time}] ${text}`;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+  while (logEl.childElementCount > 200) logEl.removeChild(logEl.firstChild);
+}
+
+/* ---------- 数值卡片 ---------- */
+function buildTiles(){
+  const box = $('tiles');
+  box.innerHTML = '';
+  COUNTS.forEach((ch, i) => {
+    const d = document.createElement('div');
+    d.className = 'tile';
+    d.innerHTML = `<div class="nm"><span class="sw" style="background:${COLORS[i]}"></span>${NAMES[ch]}</div>
+                   <div class="v" id="tc${i}">—</div>
+                   <div class="sub" id="ts${i}">&nbsp;</div>`;
+    box.appendChild(d);
+  });
+}
+buildTiles();
+
+/* ---------- 串口 ---------- */
+async function connect(){
+  if (!('serial' in navigator)){
+    logLine('这个浏览器不支持 Web Serial。请用 Chrome 或 Edge（89 以上），' +
+            '或者用 python -m http.server 起个本地服务后用 http://localhost 打开。', 'err');
+    setConn('err','浏览器不支持');
+    return;
+  }
+  try{
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: Number($('baud').value) });
+  }catch(e){
+    logLine('打开串口失败：' + e.message + '（端口被别的程序占用了？）', 'err');
+    setConn('err','打开失败');
+    return;
+  }
+  keepReading = true;
+  setConn('on', '已连接 @ ' + $('baud').value);
+  $('btnConnect').disabled = true;
+  $('btnDisconnect').disabled = false;
+  $('baud').disabled = true;
+  readLoop();
+}
+
+async function disconnect(){
+  keepReading = false;
+  try{ if (reader) await reader.cancel(); }catch(e){}
+  try{ if (port) await port.close(); }catch(e){}
+  reader = null; port = null;
+  setConn('', '未连接');
+  $('btnConnect').disabled = false;
+  $('btnDisconnect').disabled = true;
+  $('baud').disabled = false;
+}
+
+async function readLoop(){
+  const dec = new TextDecoder();
+  let buf = '';
+  try{
+    reader = port.readable.getReader();
+    while (keepReading){
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0){
+        handleLine(buf.slice(0, i).replace(/\r/g, ''));
+        buf = buf.slice(i + 1);
+      }
+      if (buf.length > 8192) buf = '';       // 半行失控时丢弃
+    }
+  }catch(e){
+    if (keepReading) logLine('读取中断：' + e.message, 'err');
+  }finally{
+    try{ if (reader) reader.releaseLock(); }catch(e){}
+    reader = null;
+    if (keepReading) await disconnect();
+  }
+}
+
+function handleLine(line){
+  const t = line.trim();
+  if (!t) return;
+
+  const parts = t.split(',');
+  if (parts.length !== CH){
+    logLine(t, 'warn');                      // 固件的开机横幅、命令回显等
+    return;
+  }
+  const vals = parts.map(Number);
+  if (vals.some(v => !Number.isFinite(v))){
+    logLine(t, 'warn');
+    return;
+  }
+
+  totalFrames++;
+  $('lastLine').textContent = t;
+
+  for (let c = 0; c < CH; c++){
+    series[c].push(vals[c]);
+    if (series[c].length > MAXPTS) series[c].shift();
+  }
+
+  /* tick 频率 */
+  const now = performance.now();
+  if (lastTick !== null){
+    const dv = vals[TICK] - lastTick, dt = (now - lastTickTime) / 1000;
+    if (dv > 0 && dt > 0) tickHz = dv / dt;
+  }
+  lastTick = vals[TICK]; lastTickTime = now;
+
+  /* 帧率 */
+  rateWindow.push(now);
+  while (rateWindow.length && now - rateWindow[0] > 1000) rateWindow.shift();
+
+  if (recOn) recRows.push([new Date().toISOString(), ...vals]);
+
+  updateTiles(vals);
+}
+
+function updateTiles(vals){
+  COUNTS.forEach((ch, i) => {
+    $('tc' + i).textContent = vals[ch];
+    $('ts' + i).textContent = (vals[ch] * MM_PER_COUNT).toFixed(1) + ' mm';
+  });
+  $('tickVal').textContent = vals[TICK];
+  $('tickRate').textContent = tickHz ? tickHz.toFixed(0) + ' Hz' : '测量中…';
+  $('tickHz').textContent = tickHz ? tickHz.toFixed(0) + ' Hz' : '—';
+  $('frameHz').textContent = rateWindow.length + ' Hz';
+  $('rateText').textContent = rateWindow.length + ' 样本/秒';
+  $('cntText').textContent = totalFrames + ' 帧';
+}
+
+/* ---------- 绘图 ---------- */
+function drawChart(canvas, chans){
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== w * dpr || canvas.height !== h * dpr){
+    canvas.width = w * dpr; canvas.height = h * dpr;
+  }
+  const g = canvas.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+
+  /* Y 轴范围 */
+  let mn = Infinity, mx = -Infinity;
+  chans.forEach(c => series[c].forEach(v => { if (v < mn) mn = v; if (v > mx) mx = v; }));
+  if (!isFinite(mn)){ mn = -1; mx = 1; }
+  if (mn === mx){ mn -= 1; mx += 1; }
+  const pad = (mx - mn) * 0.08; mn -= pad; mx += pad;
+
+  const L = 62, R = 8, T = 8, B = 18;
+  const pw = w - L - R, ph = h - T - B;
+
+  /* 网格 + Y 刻度 */
+  g.strokeStyle = '#242c38'; g.fillStyle = '#8b97a8';
+  g.font = '11px ui-monospace,Consolas,monospace'; g.textAlign = 'right';
+  for (let k = 0; k <= 4; k++){
+    const y = T + ph * k / 4;
+    g.beginPath(); g.moveTo(L, y); g.lineTo(L + pw, y); g.stroke();
+    g.fillText(Math.round(mx - (mx - mn) * k / 4), L - 6, y + 4);
+  }
+  /* 零线 */
+  if (mn < 0 && mx > 0){
+    const y0 = T + ph * (mx / (mx - mn));
+    g.strokeStyle = '#39404f'; g.beginPath();
+    g.moveTo(L, y0); g.lineTo(L + pw, y0); g.stroke();
+  }
+
+  /* 曲线 */
+  const n = Math.max(...chans.map(c => series[c].length));
+  if (n >= 2){
+    chans.forEach((c, i) => {
+      const s = series[c];
+      if (s.length < 2) return;
+      const off = n - s.length;                 // 右对齐
+      g.strokeStyle = COLORS[i]; g.lineWidth = 1.5; g.beginPath();
+      for (let k = 0; k < s.length; k++){
+        const x = L + pw * (off + k) / (n - 1);
+        const y = T + ph * (1 - (s[k] - mn) / (mx - mn));
+        if (k === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.stroke();
+    });
+  }
+
+  /* 图例 */
+  g.textAlign = 'left'; g.font = '11px ui-monospace,Consolas,monospace';
+  chans.forEach((c, i) => {
+    g.fillStyle = COLORS[i];
+    const x = L + 10 + i * 74;
+    g.fillRect(x, T + 4, 8, 8);
+    g.fillStyle = '#c8d2e0';
+    g.fillText(NAMES[c], x + 12, T + 12);
+  });
+}
+
+function animate(){
+  drawChart($('cvCounts'), COUNTS);
+  drawChart($('cvSpeeds'), SPEEDS);
+  requestAnimationFrame(animate);
+}
+animate();
+
+/* ---------- 命令 ---------- */
+async function sendCmd(text){
+  if (!port || !port.writable){
+    logLine('串口未连接，发不出去', 'err');
+    return;
+  }
+  try{
+    const w = port.writable.getWriter();
+    await w.write(new TextEncoder().encode(text + '\r\n'));
+    w.releaseLock();
+    logLine('→ ' + text, 'ok');
+  }catch(e){
+    logLine('发送失败：' + e.message, 'err');
+  }
+}
+
+/* ---------- 记录 ---------- */
+function toggleRec(){
+  recOn = !recOn;
+  if (recOn){
+    recRows = [];
+    $('btnRec').textContent = '停止记录';
+    $('btnSave').disabled = true;
+    logLine('开始记录');
+  }else{
+    $('btnRec').textContent = '开始记录';
+    $('btnSave').disabled = recRows.length === 0;
+    logLine('停止记录，共 ' + recRows.length + ' 行');
+  }
+  $('recText').textContent = recOn ? '记录中…' : (recRows.length ? recRows.length + ' 行（点下载）' : '未记录');
+}
+
+function saveCsv(){
+  const head = ['time', ...NAMES];
+  const body = [head.join(','), ...recRows.map(r => r.join(','))].join('\n');
+  const url = URL.createObjectURL(new Blob([body], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'encoder_log_' + new Date().toISOString().replace(/[:.]/g, '-') + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ---------- 事件绑定 ---------- */
+$('btnConnect').onclick = connect;
+$('btnDisconnect').onclick = disconnect;
+$('btnClear').onclick = () => {
+  series = NAMES.map(() => []);
+  totalFrames = 0; rateWindow = []; tickHz = null; lastTick = null;
+  logLine('已清空波形');
+};
+$('btnRec').onclick = toggleRec;
+$('btnSave').onclick = saveCsv;
+
+$('cmd').addEventListener('keydown', e => {
+  if (e.key === 'Enter'){
+    const v = e.target.value.trim();
+    if (v){ sendCmd(v); e.target.value = ''; }
+  }
+});
+document.querySelectorAll('button[data-cmd]').forEach(b => {
+  b.onclick = () => sendCmd(b.dataset.cmd);
+});
+
+/* ---------- 启动提示 ---------- */
+if (!('serial' in navigator)){
+  logLine('这个浏览器没有 Web Serial 接口。请用 Chrome / Edge 打开本文件；' +
+          '若从 file:// 打开仍不可用，在本文件所在目录执行  python -m http.server 8000  ' +
+          '再用 http://localhost:8000/' + location.pathname.split('/').pop() + ' 打开。', 'err');
+  setConn('err', '需 Chrome/Edge');
+}else{
+  setConn('', '未连接');
+  logLine('就绪。点「连接串口」选择你的 USB-TTL 端口（固件固定在 115200 8N1）。');
+}
+</script>
+</body>
+</html>

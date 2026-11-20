@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "note": "默认区间只是能跑起来的起点，必须用 calib_color.py 对实物重标。class 编号与任务码一致：1红 2黄 3蓝 4绿 5黑 6浅蓝。tray/ring 两个键给载物盘和色环的专用区间，可选。",
+  "classes": {
+    "1": {
+      "name": "red",
+      "hsv_ranges": [
+        [[0, 90, 70], [8, 255, 255]],
+        [[170, 90, 70], [179, 255, 255]]
+      ],
+      "lab_center": [128.0, 200.0, 175.0],
+      "samples": 0
+    },
+    "2": {
+      "name": "yellow",
+      "hsv_ranges": [
+        [[20, 100, 120], [35, 255, 255]]
+      ],
+      "lab_center": [200.0, 105.0, 195.0],
+      "samples": 0
+    },
+    "3": {
+      "name": "blue",
+      "hsv_ranges": [
+        [[100, 110, 60], [125, 255, 255]]
+      ],
+      "lab_center": [80.0, 165.0, 105.0],
+      "samples": 0
+    },
+    "4": {
+      "name": "green",
+      "hsv_ranges": [
+        [[45, 90, 50], [80, 255, 255]]
+      ],
+      "lab_center": [150.0, 95.0, 170.0],
+      "samples": 0
+    },
+    "5": {
+      "name": "black",
+      "mode": "dark",
+      "dark_ratio": 0.22,
+      "max_v": 170,
+      "max_s": 140,
+      "shadow_guard_px": 28,
+      "min_circle_fill": 0.70,
+      "min_solidity": 0.85,
+      "hsv_ranges": [],
+      "lab_center": [20.0, 128.0, 128.0],
+      "samples": 0,
+      "note": "mode=dark：不用 HSV 阈值。判据是'比局部背景暗 22% + 绝对亮度<=170 + 饱和度<=140 + 不贴着彩色物体'。阴影永远紧贴彩色目标，黑料是孤立的，这一条才是分开它们的关键。dark_ratio 和 max_v 需要按现场实测调。"
+    },
+    "6": {
+      "name": "lightblue",
+      "hsv_ranges": [
+        [[85, 45, 150], [105, 140, 255]]
+      ],
+      "lab_center": [140.0, 145.0, 150.0],
+      "samples": 0
+    }
+  }
+}

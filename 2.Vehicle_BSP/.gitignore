@@ -1,0 +1,23 @@
+MDK-ARM/Vehicle_BSP/
+MDK-ARM/Motor_A_Test/
+MDK-ARM/Motor_C_Test/
+MDK-ARM/Stepper_Test/
+MDK-ARM/Servo_Test/
+MDK-ARM/Hmi_Test/
+MDK-ARM/Stepper42_U1_Test/
+MDK-ARM/Stepper42_U4_Test/
+MDK-ARM/Stepper_Example10_Test/
+MDK-ARM/Stepper_Example10_Slow_Test/
+MDK-ARM/Stepper_Phase_Test/
+MDK-ARM/Vehicle_Integrated/
+MDK-ARM/Bench_Tests/
+MDK-ARM/*.uvoptx
+MDK-ARM/*.uvguix.*
+MDK-ARM/build*.log
+MDK-ARM/_legacy/
+
+# PC 侧视觉脚本（Tools/vision）跑出来的临时件
+__pycache__/
+*.pyc
+samples/
+masks/

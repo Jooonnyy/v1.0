@@ -1,0 +1,25 @@
+# 双相机固定设备名（树莓派 4B，2026-11-09 实测）
+#
+# 安装：
+#   sudo cp 99-cams.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   ls -l /dev/cam_target /dev/cam_qr
+#
+# 为什么不能直接写 /dev/video0、/dev/video2：
+#   USB 相机的编号跟着插拔顺序和开机时序走，今天 video0 明天可能是 video2，
+#   参数一填错就是"画面对了但对着的是另一台相机"这种最难查的错。
+#
+# 为什么必须加 ATTR{index}=="0"：
+#   每台 UVC 相机在 /dev 下出两个节点。index0 是真正的采集节点，
+#   index1 是 UVC 元数据节点 —— 它能被 open() 成功打开，但 read() 永远不返回帧。
+#   不排除它的话，绑到元数据节点上表现为"相机打不开画面"，但程序不报错。
+#
+# ID_PATH 与 /dev/v4l/by-path/ 里的前缀一一对应，所以是照着实际输出抄的。
+#
+# 2026-11-09 实测确认（cam_check.py 看过画面）：
+#   USB 口 1.3 = LRCP G720P   = /dev/video0 → 对着**物料台** → cam_target
+#   USB 口 1.4 = LRCP V1080P  = /dev/video2 → 对着**二维码** → cam_qr
+# 与最初按"高分辨率给物料"的猜测相反，以实测为准。
+
+SUBSYSTEM=="video4linux", ENV{ID_PATH}=="platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.3:1.0", ATTR{index}=="0", GROUP="video", MODE="0660", SYMLINK+="cam_target"
+SUBSYSTEM=="video4linux", ENV{ID_PATH}=="platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.4:1.0", ATTR{index}=="0", GROUP="video", MODE="0660", SYMLINK+="cam_qr"
